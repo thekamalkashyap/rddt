@@ -1,0 +1,101 @@
+#!/bin/sh
+
+# variables
+cachedir="/tmp/rddt"
+
+# Check necessary programs are installed or not
+
+check_deps() {
+    while [ -n "$1" ]; do
+        if [ ! "$(command -v $1)" ]; then
+            echo "\"$1\" not found!"
+            exit 2
+        fi
+        shift
+    done
+}
+check_deps "fuzzel" "jq" "img2sixel"
+
+
+# help 
+help_text() {
+    printf "%bUsage:%b rddt %b[options]%b %bsubreddit%b\n" "$G" "$N" "$Y" "$N" "$M" "$N"
+    printf "\n"
+    printf "%bOptions:%b\n" "$G" "$N"
+    printf "  -h                    Show this help message and exit.\n"
+    printf "\n"
+	printf "  -l                    Number of posts you want to download.\n"
+    printf "\n"
+	printf "  -v                    Verbosely download data.\n"
+    printf "\n"
+	printf "  -k                    Keep old data in temp file.\n"
+    printf "\n"
+    printf "\n"
+}
+
+
+# handle args
+while getopts "l:hkv" OPT; do
+    case "$OPT" in
+	h)
+		help_text
+		exit 0
+		;;
+    l)
+	    LIMIT=${OPTARG}
+        ;;
+	k)
+		KEEP=1
+		;;
+	v)
+		VERBOSE=1
+		;;
+	*)
+        echo "Unknown argument given."
+		;;
+    esac
+done
+
+[[ ! ${@: -1} =~ ^[0-9]+$ ]] && [[ ${@: -1} != -* ]] && subreddit=${@: -1}
+
+# If no subreddit was given
+if [ -z "$subreddit" ]; then
+    subreddit="$(fuzzel -d -p "Enter subreddit r/")"
+    [ -z "$subreddit" ] && echo "no sub chosen" && exit 1
+fi
+
+
+# create cachedir if not exist and delete cache if exists
+if [ ! -d "$cachedir" ]; then
+	mkdir -p "$cachedir"
+fi
+
+# Send a notification
+[ "$VERBOSE" = 1 ] && echo "rddt is Downloading your Memes"
+
+# Download the subreddit feed, containing only the
+# first 20 entries (limit), and store it inside
+# cachedir/tmp.json
+curl -H "User-agent: 'your bot 0.1'" "https://www.reddit.com/r/$subreddit/hot.json?limit=${LIMIT:-19}" > "$cachedir/tmp.json"
+
+# Create a list of images
+imgs=$(jq '.' < "$cachedir/tmp.json" | grep url_overridden_by_dest | grep -Eo "http(s|)://.*(jpg|png)\b" | sort -u)
+
+# If there are no images, exit
+[ -z "$imgs" ] && echo "Rddt" "sadly, there are no images for subreddit $subreddit, please try again later!" && exit 1
+
+# Download images to $cachedir
+for img in $imgs; do
+	if [ ! -e "$cachedir/${img##*/}" ]; then
+		wget -P "$cachedir" $img
+	fi
+done
+
+# Send a notification
+[ "$VERBOSE" = 1 ] && echo  "Rddt Download Finished, Enjoy!"
+rm "$cachedir/tmp.json"
+# Display the images
+img2sixel -w 500 "$cachedir"/*
+
+# Once finished, remove all of the cached images
+[ ! "$KEEP" = 1 ] && rm -rf "$cachedir"/*
